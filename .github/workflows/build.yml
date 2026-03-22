@@ -94,13 +94,6 @@ jobs:
       contents: write
 
     steps:
-      - name: Debug context
-        run: |
-          echo "Event name: ${{ github.event_name }}"
-          echo "Ref: ${{ github.ref }}"
-          echo "Ref type: ${{ github.ref_type }}"
-          echo "Tag name: ${{ github.ref_name }}"
-
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -110,17 +103,24 @@ jobs:
           name: zeroclawdash-armv7
           path: ./release
 
+      - name: Set execute permission
+        run: chmod +x ./release/${{ env.BINARY_NAME }}
+
+      - name: Create tarball
+        run: |
+          cd ./release
+          tar -czvf ../zeroclawdash-${{ github.ref_name }}-linux-armv7.tar.gz ${{ env.BINARY_NAME }} ${{ env.BINARY_NAME }}.sha256
+          ls -lh ../zeroclawdash-${{ github.ref_name }}-linux-armv7.tar.gz
+
       - name: Display files
         run: |
           ls -lh ./release
-          cat ./release/${{ env.BINARY_NAME }}.sha256
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            ./release/${{ env.BINARY_NAME }}
-            ./release/${{ env.BINARY_NAME }}.sha256
+            ./zeroclawdash-${{ github.ref_name }}-linux-armv7.tar.gz
           generate_release_notes: true
           draft: false
           prerelease: false
