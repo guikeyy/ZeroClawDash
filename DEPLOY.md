@@ -1,72 +1,84 @@
 # ZeroClawDash 部署指南
 
-## 编译说明
-
-### 本地编译（开发测试）
-```bash
-make build
-```
-
-### 交叉编译（玩客云 ARMv7）
-```bash
-make build-armv7
-```
-
-### 编译所有版本
-```bash
-make build-all
-```
-
 ## 部署步骤
 
-### 1. 上传二进制文件
-将编译好的 `zeroclawdash-armv7` 文件上传到玩客云设备
+### 1. 下载二进制文件
+
+从 GitHub Releases 下载适用于玩客云 ARMv7 架构的二进制文件：
+
+```bash
+wget https://github.com/guikeyy/zeroclaw/releases/latest/download/zeroclawdash-armv7
+```
+
+或者手动下载后通过 SCP 上传到玩客云：
+
+```bash
+scp zeroclawdash root@<玩客云IP>:/root/
+```
 
 ### 2. 安装到系统路径
+
 ```bash
-chmod +x zeroclawdash-armv7
-sudo cp zeroclawdash-armv7 /usr/local/bin/zeroclawdash
+chmod +x zeroclawdash
+mv zeroclawdash /zeroclaw的文件夹下 # 把二进制移动到跟
 ```
 
-### 3. 创建 systemd 服务文件
+### 3. 使用管理脚本
+
+使用提供的 `manage.sh` 脚本进行进程管理：
+
 ```bash
-sudo nano /etc/systemd/system/zeroclawdash.service
+chmod +x manage.sh
 ```
 
-添加以下内容：
-```ini
-[Unit]
-Description=ZeroClawDash Web Manager
-After=network.target
-
-[Service]
-Type=simple
-User=root
-ExecStart=/usr/local/bin/zeroclawdash
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
+**启动服务：**
+```bash
+./manage.sh start
 ```
 
-### 4. 启动服务
+**停止服务：**
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable zeroclawdash
-sudo systemctl start zeroclawdash
+./manage.sh stop
 ```
 
-### 5. 查看服务状态
+**查看状态：**
 ```bash
-sudo systemctl status zeroclawdash
+./manage.sh status
+```
+
+**重启服务：**
+```bash
+./manage.sh restart
+```
+
+### 4. 静默运行说明
+
+管理脚本已配置为静默运行模式，使用 `nohup` 方式启动，断开终端后进程会继续运行。
+
+如需手动静默运行：
+
+```bash
+nohup /usr/local/bin/zeroclawdash > /var/log/zeroclawdash.log 2>&1 &
+```
+
+查看日志：
+```bash
+tail -f /var/log/zeroclawdash.log
+```
+
+### 5. 查看进程
+
+确认服务正在运行：
+
+```bash
+ps aux | grep zeroclawdash
 ```
 
 ## 访问 Web 界面
 
 在浏览器中访问：
 ```
-http://<玩客云IP>:8080
+http://<玩客云IP>:42611
 ```
 
 ## API 接口说明
@@ -90,3 +102,4 @@ ZeroClaw 配置文件：`~/.zeroclaw/config.toml`
 2. 确保 journalctl 服务可用（用于日志流）
 3. 确保有足够的权限读取 `/proc/stat` 和 `/proc/meminfo`
 4. 更新功能需要网络访问 GitHub API
+5. 日志文件默认保存在 `/var/log/zeroclawdash.log`
