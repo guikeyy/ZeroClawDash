@@ -65,6 +65,13 @@
 
             <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
                 <h3 class="text-gray-500 text-xs font-bold uppercase mb-4">服务控制</h3>
+                <div class="mb-4">
+                    <label class="text-sm text-gray-600 mb-2 block">服务类型</label>
+                    <select id="service-type" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="daemon">Daemon (完整运行时)</option>
+                        <option value="gateway">Gateway (Webhook/WhatsApp)</option>
+                    </select>
+                </div>
                 <div class="grid grid-cols-2 gap-3">
                     <button onclick="apiAction('start')" class="flex items-center justify-center gap-2 bg-green-50 text-green-700 py-2 rounded-lg hover:bg-green-100 transition">
                         <i data-lucide="play" class="w-4 h-4"></i> 启动
@@ -450,12 +457,13 @@
 
         async function apiAction(type) {
             try {
+                const serviceType = document.getElementById('service-type').value;
                 const response = await fetch('/api/service/control', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ action: type })
+                    body: JSON.stringify({ action: type, type: serviceType })
                 });
 
                 if (!response.ok) {

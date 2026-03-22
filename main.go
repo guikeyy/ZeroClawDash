@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -44,14 +46,16 @@ type ConfigRequest struct {
 
 type ServiceControlRequest struct {
 	Action string `json:"action"`
+	Type   string `json:"type"`
 }
 
 type GitHubRelease struct {
 	TagName string `json:"tag_name"`
 	HTMLURL string `json:"html_url"`
 	Assets  []struct {
-		Name string `json:"name"`
-		URL  string `json:"browser_download_url"`
+		Name   string `json:"name"`
+		URL    string `json:"browser_download_url"`
+		Digest string `json:"digest"`
 	} `json:"assets"`
 }
 
@@ -298,22 +302,43 @@ func handleServiceControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[SERVICE] 收到服务控制请求: %s", req.Action)
+	log.Printf("[SERVICE] 收到服务控制请求: %s (类型: %s)", req.Action, req.Type)
 	var cmd *exec.Cmd
+	serviceType := req.Type
+	if serviceType == "" {
+		serviceType = "daemon"
+	}
+
 	switch req.Action {
 	case "start":
-		cmd = exec.Command("zeroclaw", "service", "start")
+		cmd = exec.Command("./zeroclaw", serviceType)
 	case "stop":
-		cmd = exec.Command("zeroclaw", "service", "stop")
+		if serviceType == "daemon" {
+			cmd = exec.Command("./zeroclaw", "estop")
+		} else {
+			cmd = exec.Command("pkill", "-f", fmt.Sprintf("./zeroclaw %s", serviceType))
+		}
 	case "restart":
-		cmd = exec.Command("zeroclaw", "service", "restart")
+		if serviceType == "daemon" {
+			cmd = exec.Command("./zeroclaw", "estop", "resume")
+			if err := cmd.Run(); err != nil {
+				log.Printf("[SERVICE] 停止服务失败: %v", err)
+			}
+			cmd = exec.Command("./zeroclaw", serviceType)
+		} else {
+			cmd = exec.Command("pkill", "-f", fmt.Sprintf("./zeroclaw %s", serviceType))
+			if err := cmd.Run(); err != nil {
+				log.Printf("[SERVICE] 停止服务失败: %v", err)
+			}
+			cmd = exec.Command("./zeroclaw", serviceType)
+		}
 	default:
 		log.Printf("[SERVICE] 无效的操作: %s", req.Action)
 		http.Error(w, "Invalid action", http.StatusBadRequest)
 		return
 	}
 
-	log.Printf("[SERVICE] 正在执行: zeroclaw service %s", req.Action)
+	log.Printf("[SERVICE] 正在执行: %s", strings.Join(cmd.Args, " "))
 	if err := cmd.Run(); err != nil {
 		log.Printf("[SERVICE] 执行失败: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to execute %s: %v", req.Action, err), http.StatusInternalServerError)
@@ -399,10 +424,15 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[UPDATE] 发现新版本: %s", release.TagName)
 	assetURL := ""
+	expectedHash := ""
 	for _, asset := range release.Assets {
 		if strings.Contains(asset.Name, "armv7-unknown-linux-gnueabihf") {
 			assetURL = asset.URL
 			log.Printf("[UPDATE] 找到匹配的架构: %s", asset.Name)
+			if strings.HasPrefix(asset.Digest, "sha256:") {
+				expectedHash = strings.TrimPrefix(asset.Digest, "sha256:")
+				log.Printf("[UPDATE] 获取到期望的哈希值: %s", expectedHash)
+			}
 			break
 		}
 	}
@@ -414,7 +444,7 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Println("[UPDATE] 开始下载并安装新版本...")
-	if err := downloadAndInstallBinary(assetURL, release.TagName); err != nil {
+	if err := downloadAndInstallBinary(assetURL, release.TagName, expectedHash); err != nil {
 		log.Printf("[UPDATE] 更新失败: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to update: %v", err), http.StatusInternalServerError)
 		return
@@ -569,17 +599,11 @@ func getMemoryUsage() string {
 }
 
 func getServiceStatus() string {
-	cmd := exec.Command("zeroclaw", "service", "status")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
+	cmd := exec.Command("pgrep", "-f", "./zeroclaw")
+	if err := cmd.Run(); err != nil {
 		return "stopped"
 	}
-
-	if strings.Contains(string(output), "running") || strings.Contains(string(output), "active") {
-		return "running"
-	}
-
-	return "stopped"
+	return "running"
 }
 
 func readConfig() (*Config, error) {
@@ -629,7 +653,7 @@ func validateConfig() error {
 	for i := 0; i < 3; i++ {
 		attempt := i + 1
 		log.Printf("[CONFIG] 验证尝试 %d/3", attempt)
-		cmd := exec.Command("zeroclaw", "agent", "-m", "Hello, ZeroClaw!")
+		cmd := exec.Command("./zeroclaw", "agent", "-m", "Hello, ZeroClaw!")
 		output, err := cmd.CombinedOutput()
 		if err == nil {
 			log.Println("[CONFIG] 配置验证成功")
@@ -649,12 +673,16 @@ func validateConfig() error {
 }
 
 func restartService() error {
-	cmd := exec.Command("zeroclaw", "service", "restart")
+	cmd := exec.Command("./zeroclaw", "estop", "resume")
+	if err := cmd.Run(); err != nil {
+		log.Printf("[SERVICE] 停止服务失败: %v", err)
+	}
+	cmd = exec.Command("./zeroclaw", "daemon")
 	return cmd.Run()
 }
 
 func getLatestRelease() (*GitHubRelease, error) {
-	resp, err := http.Get("https://api.github.com/repos/guikeyy/zeroclaw/releases/latest")
+	resp, err := http.Get("https://api.github.com/repos/zeroclaw-labs/zeroclaw/releases/latest")
 	if err != nil {
 		return nil, err
 	}
@@ -668,7 +696,7 @@ func getLatestRelease() (*GitHubRelease, error) {
 	return &release, nil
 }
 
-func downloadAndInstallBinary(assetURL, version string) error {
+func downloadAndInstallBinary(assetURL, version, expectedHash string) error {
 	log.Printf("[UPDATE] 正在下载: %s", assetURL)
 	resp, err := http.Get(assetURL)
 	if err != nil {
@@ -689,6 +717,27 @@ func downloadAndInstallBinary(assetURL, version string) error {
 	defer os.Remove(tempFile)
 	log.Println("[UPDATE] 下载完成")
 
+	log.Println("[UPDATE] 开始计算下载文件的 SHA256 哈希值...")
+	actualHash, err := calculateSHA256(tempFile)
+	if err != nil {
+		return fmt.Errorf("计算哈希值失败: %v", err)
+	}
+	log.Printf("[UPDATE] 下载文件 SHA256: %s", actualHash)
+
+	if expectedHash != "" {
+		log.Printf("[UPDATE] 期望的 SHA256: %s", expectedHash)
+		log.Println("[UPDATE] 正在对比哈希值...")
+		if actualHash != expectedHash {
+			log.Printf("[UPDATE] 哈希值不匹配！")
+			log.Printf("[UPDATE]   期望: %s", expectedHash)
+			log.Printf("[UPDATE]   实际: %s", actualHash)
+			return fmt.Errorf("哈希值校验失败：文件可能已损坏或被篡改")
+		}
+		log.Println("[UPDATE] 哈希值校验通过！")
+	} else {
+		log.Println("[UPDATE] 警告：未提供期望的哈希值，跳过校验")
+	}
+
 	binaryPath := "/usr/local/bin/zeroclaw"
 	backupPath := binaryPath + ".bak"
 
@@ -699,7 +748,7 @@ func downloadAndInstallBinary(assetURL, version string) error {
 	log.Println("[UPDATE] 备份完成")
 
 	log.Println("[UPDATE] 正在停止服务...")
-	cmd := exec.Command("zeroclaw", "service", "stop")
+	cmd := exec.Command("./zeroclaw", "estop")
 	if err := cmd.Run(); err != nil {
 		log.Printf("Warning: failed to stop service: %v", err)
 	}
@@ -745,6 +794,22 @@ func downloadAndInstallBinary(assetURL, version string) error {
 
 	log.Println("[UPDATE] 更新流程完成")
 	return nil
+}
+
+func calculateSHA256(filePath string) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", fmt.Errorf("无法打开文件: %v", err)
+	}
+	defer file.Close()
+
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return "", fmt.Errorf("计算哈希值失败: %v", err)
+	}
+
+	hash := hex.EncodeToString(hasher.Sum(nil))
+	return hash, nil
 }
 
 func restoreBinary(backupPath string) {

@@ -89,11 +89,20 @@ jobs:
     name: Create Release
     needs: build-armv7
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    if: |
+      github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: write
 
     steps:
+      - name: Debug context
+        run: |
+          echo "Event name: ${{ github.event_name }}"
+          echo "Ref: ${{ github.ref }}"
+          echo "Ref type: ${{ github.ref_type }}"
+          echo "Tag name: ${{ github.ref_name }}"
+
       - name: Checkout code
         uses: actions/checkout@v4
 
