@@ -220,9 +220,6 @@
                     <button onclick="clearLogs()" class="text-[10px] text-gray-400 hover:text-red-500">清空</button>
                 </div>
                 <div id="logs" class="log-container p-4 text-xs leading-relaxed mono">
-                    <div class="text-gray-500">[INFO] 正在连接日志流...</div>
-                    <div class="text-green-400">[SYSTEM] 成功加载配置文件: ~/.zeroclaw/config.toml</div>
-                    <div class="text-blue-300">[API] 监听到本地 127.0.0.1:8080</div>
                 </div>
             </div>
         </div>
@@ -287,6 +284,15 @@
                 const versionMessageEl = document.getElementById('version-message');
 
                 if (data.error) {
+                    if (data.error.includes('请求超时') || data.error.includes('timeout')) {
+                        localVersionEl.textContent = data.local_version || '-';
+                        latestVersionEl.textContent = data.message || '-';
+                        versionStatusEl.textContent = '请求超时，网络错误';
+                        versionStatusEl.classList.add('text-red-500');
+                        versionMessageEl.textContent = '云端链接: ' + (data.message || 'https://api.github.com/repos/zeroclaw-labs/zeroclaw/releases/latest');
+                        updateCardEl.classList.add('hidden');
+                        return;
+                    }
                     localVersionEl.textContent = '未检测到';
                     latestVersionEl.textContent = '-';
                     versionStatusEl.textContent = data.message;
@@ -295,16 +301,18 @@
                     return;
                 }
 
-                localVersionEl.textContent = 'v' + data.local_version;
-                latestVersionEl.textContent = data.latest_version;
+                const localVersion = data.local_version || '-';
+                const latestVersion = data.latest_version || '-';
+                localVersionEl.textContent = localVersion;
+                latestVersionEl.textContent = latestVersion;
 
                 if (data.update_available) {
-                    versionStatusEl.textContent = '发现新版本';
+                    versionStatusEl.textContent = data.message;
                     versionStatusEl.classList.add('text-indigo-600');
-                    versionMessageEl.textContent = data.message;
+                    versionMessageEl.textContent = '本地版本: ' + localVersion + '\n云端最新版本: ' + latestVersion + '\n发现新版本: ' + data.message;
                     updateCardEl.classList.remove('hidden');
                 } else {
-                    versionStatusEl.textContent = '当前已是最新版本';
+                    versionStatusEl.textContent = data.message;
                     versionStatusEl.classList.add('text-green-600');
                     updateCardEl.classList.add('hidden');
                 }
@@ -509,6 +517,14 @@
                 document.getElementById('cpu-val').textContent = data.cpu_usage;
                 document.getElementById('mem-val').textContent = data.memory_usage;
 
+                const memMatch = data.memory_usage.match(/(\d+)MB \/ (\d+)MB/);
+                if (memMatch) {
+                    const used = parseInt(memMatch[1]);
+                    const total = parseInt(memMatch[2]);
+                    const memPercent = Math.round((used / total) * 100);
+                    document.querySelectorAll('.bg-blue-500')[1].style.width = memPercent + '%';
+                }
+
                 const statusIndicator = document.querySelector('.status-pulse');
                 if (data.service_status === 'running') {
                     statusIndicator.classList.remove('bg-red-400');
@@ -531,6 +547,14 @@
                     
                     document.getElementById('cpu-val').textContent = data.cpu_usage;
                     document.getElementById('mem-val').textContent = data.memory_usage;
+
+                    const memMatch = data.memory_usage.match(/(\d+)MB \/ (\d+)MB/);
+                    if (memMatch) {
+                        const used = parseInt(memMatch[1]);
+                        const total = parseInt(memMatch[2]);
+                        const memPercent = Math.round((used / total) * 100);
+                        document.querySelectorAll('.bg-blue-500')[1].style.width = memPercent + '%';
+                    }
 
                     const statusIndicator = document.querySelector('.status-pulse');
                     if (data.service_status === 'running') {

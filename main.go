@@ -457,6 +457,14 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+var lastCPUStats struct {
+	user   float64
+	nice   float64
+	system float64
+	idle   float64
+	time   time.Time
+}
+
 func getCPUUsage() string {
 	if runtime.GOOS == "linux" {
 		data, err := os.ReadFile("/proc/stat")
@@ -473,9 +481,38 @@ func getCPUUsage() string {
 					nice, _ := strconv.ParseFloat(fields[2], 64)
 					system, _ := strconv.ParseFloat(fields[3], 64)
 					idle, _ := strconv.ParseFloat(fields[4], 64)
-					total := user + nice + system + idle
-					usage := (user + nice + system) / total * 100
-					return fmt.Sprintf("%.0f%%", usage)
+
+					now := time.Now()
+					elapsed := now.Sub(lastCPUStats.time).Seconds()
+
+					if elapsed > 0 && lastCPUStats.time.Unix() > 0 {
+						userDelta := user - lastCPUStats.user
+						niceDelta := nice - lastCPUStats.nice
+						systemDelta := system - lastCPUStats.system
+						idleDelta := idle - lastCPUStats.idle
+						totalDelta := userDelta + niceDelta + systemDelta + idleDelta
+
+						if totalDelta > 0 {
+							usage := (userDelta + niceDelta + systemDelta) / totalDelta * 100
+							lastCPUStats = struct {
+								user   float64
+								nice   float64
+								system float64
+								idle   float64
+								time   time.Time
+							}{user, nice, system, idle, now}
+							return fmt.Sprintf("%.0f%%", usage)
+						}
+					}
+
+					lastCPUStats = struct {
+						user   float64
+						nice   float64
+						system float64
+						idle   float64
+						time   time.Time
+					}{user, nice, system, idle, now}
+					return "0%"
 				}
 			}
 		}
@@ -517,6 +554,8 @@ func getMemoryUsage() string {
 		lines := strings.Split(string(data), "\n")
 		memTotal := 0.0
 		memAvailable := 0.0
+		swapTotal := 0.0
+		swapFree := 0.0
 
 		for _, line := range lines {
 			fields := strings.Fields(line)
@@ -526,13 +565,25 @@ func getMemoryUsage() string {
 					memTotal = value
 				} else if strings.HasPrefix(line, "MemAvailable:") {
 					memAvailable = value
+				} else if strings.HasPrefix(line, "SwapTotal:") {
+					swapTotal = value
+				} else if strings.HasPrefix(line, "SwapFree:") {
+					swapFree = value
 				}
 			}
 		}
 
 		if memTotal > 0 {
 			used := memTotal - memAvailable
-			return fmt.Sprintf("%.0fMB / %.0fMB", used, memTotal)
+			memTotalMB := memTotal / 1024
+			usedMB := used / 1024
+
+			if swapTotal > 0 {
+				swapUsedMB := (swapTotal - swapFree) / 1024
+				swapTotalMB := swapTotal / 1024
+				return fmt.Sprintf("%.0fMB / %.0fMB, Swap: %.0fMB / %.0fMB", usedMB, memTotalMB, swapUsedMB, swapTotalMB)
+			}
+			return fmt.Sprintf("%.0fMB / %.0fMB", usedMB, memTotalMB)
 		}
 		return "N/A"
 	}
@@ -682,7 +733,10 @@ func restartService() error {
 }
 
 func getLatestRelease() (*GitHubRelease, error) {
-	resp, err := http.Get("https://api.github.com/repos/zeroclaw-labs/zeroclaw/releases/latest")
+	client := &http.Client{
+		Timeout: 60 * time.Second,
+	}
+	resp, err := client.Get("https://api.github.com/repos/zeroclaw-labs/zeroclaw/releases/latest")
 	if err != nil {
 		return nil, err
 	}
@@ -837,11 +891,20 @@ func handleVersionCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[VERSION] 本地版本: %s", localVersion)
+	log.Printf("[VERSION] 检测到 zeroclaw，版本 %s", localVersion)
 	response.LocalVersion = localVersion
 
 	latestRelease, err := getLatestRelease()
 	if err != nil {
+		if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "Timed out") {
+			log.Printf("[VERSION] 请求超时，网络错误")
+			log.Printf("[VERSION] 云端链接: https://api.github.com/repos/zeroclaw-labs/zeroclaw/releases/latest")
+			response.Error = "请求超时，网络错误"
+			response.Message = "https://api.github.com/repos/zeroclaw-labs/zeroclaw/releases/latest"
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+			return
+		}
 		log.Printf("[VERSION] 获取云端版本失败: %v", err)
 		response.Error = fmt.Sprintf("获取云端版本失败: %v", err)
 		response.Message = "无法连接到 GitHub"
@@ -850,17 +913,19 @@ func handleVersionCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("[VERSION] 本地版本: %s", localVersion)
 	log.Printf("[VERSION] 云端最新版本: %s", latestRelease.TagName)
 	response.LatestVersion = latestRelease.TagName
+	response.Message = latestRelease.HTMLURL
 
 	if compareVersions(localVersion, latestRelease.TagName) < 0 {
 		response.UpdateAvailable = true
-		response.Message = fmt.Sprintf("发现新版本 %s", latestRelease.TagName)
 		log.Printf("[VERSION] 发现新版本: %s -> %s", localVersion, latestRelease.TagName)
+		response.Message = fmt.Sprintf("%s -> %s", localVersion, latestRelease.TagName)
 	} else {
 		response.UpdateAvailable = false
-		response.Message = "当前已是最新版本"
 		log.Printf("[VERSION] 当前已是最新版本: %s", localVersion)
+		response.Message = "当前已是最新版本"
 	}
 
 	w.Header().Set("Content-Type", "application/json")
