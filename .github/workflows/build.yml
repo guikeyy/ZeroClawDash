@@ -109,7 +109,8 @@ jobs:
       - name: Create tarball
         run: |
           cd ./release
-          tar -czvf ../zeroclawdash-${{ github.ref_name }}-linux-armv7.tar.gz ${{ env.BINARY_NAME }} ${{ env.BINARY_NAME }}.sha256
+          cp ../../manage.sh .
+          tar -czvf ../zeroclawdash-${{ github.ref_name }}-linux-armv7.tar.gz ${{ env.BINARY_NAME }} ${{ env.BINARY_NAME }}.sha256 manage.sh
           ls -lh ../zeroclawdash-${{ github.ref_name }}-linux-armv7.tar.gz
 
       - name: Display files
