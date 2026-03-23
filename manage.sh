@@ -1,9 +1,9 @@
 #!/bin/bash
 
 APP_NAME="zeroclawdash"
-APP_PATH="/usr/local/bin/${APP_NAME}"
-PID_FILE="/var/run/${APP_NAME}.pid"
-LOG_FILE="/var/log/${APP_NAME}.log"
+APP_PATH="./${APP_NAME}"
+PID_FILE="./${APP_NAME}.pid"
+LOG_FILE="./${APP_NAME}.log"
 
 case "$1" in
     start)
