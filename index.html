@@ -473,20 +473,8 @@
 
             hideError();
 
-            let operationEventSource = null;
-            
             try {
                 addLogMessage('[CONFIG] 开始保存配置...');
-                
-                operationEventSource = new EventSource('/api/update/stream');
-                
-                operationEventSource.onmessage = function(event) {
-                    addLogMessage(event.data);
-                };
-                
-                operationEventSource.onerror = function() {
-                    console.log('Operation stream connection closed');
-                };
                 
                 const response = await fetch('/api/config', {
                     method: 'POST',
@@ -513,9 +501,6 @@
                 addLogMessage('[ERROR] 保存配置失败: ' + (error.message || '请检查网络连接或配置信息'));
                 showError(error.message || '保存配置失败，请检查网络连接或配置信息');
             } finally {
-                if (operationEventSource) {
-                    operationEventSource.close();
-                }
                 saveBtn.disabled = false;
                 saveBtn.innerHTML = '<i data-lucide="save" class="w-3.5 h-3.5"></i> 保存配置';
                 lucide.createIcons();
@@ -572,20 +557,8 @@
         }
 
         async function updateBinary() {
-            let updateEventSource = null;
-            
             try {
                 addLogMessage('[UPDATE] 开始更新流程...');
-                
-                updateEventSource = new EventSource('/api/update/stream');
-                
-                updateEventSource.onmessage = function(event) {
-                    addLogMessage(event.data);
-                };
-                
-                updateEventSource.onerror = function() {
-                    console.log('Update stream connection closed');
-                };
                 
                 const response = await fetch('/api/update', {
                     method: 'POST'
@@ -602,11 +575,6 @@
                 await checkVersion();
             } catch (error) {
                 addLogMessage('[ERROR] 更新失败: ' + error.message);
-                alert('更新失败: ' + error.message);
-            } finally {
-                if (updateEventSource) {
-                    updateEventSource.close();
-                }
             }
         }
 
@@ -708,6 +676,23 @@
             };
         }
 
+        function connectOperationLog() {
+            const eventSource = new EventSource('/api/update/stream');
+
+            eventSource.onmessage = function (event) {
+                if (event.data === '[STREAM] SSE连接已建立') {
+                    console.log('Operation log stream connected');
+                } else {
+                    addLogMessage(event.data);
+                }
+            };
+
+            eventSource.onerror = function () {
+                eventSource.close();
+                console.log('Operation log connection closed, will not auto-reconnect');
+            };
+        }
+
         function addLogMessage(message) {
             const logsContainer = document.getElementById('logs');
             const logLine = document.createElement('div');
@@ -729,6 +714,7 @@
         updateSystemStatus();
         connectSystemStatus();
         connectLogs();
+        connectOperationLog();
     </script>
 </body>
 

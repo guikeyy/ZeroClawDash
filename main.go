@@ -402,6 +402,9 @@ func handleUpdateStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fmt.Fprintf(w, "data: [STREAM] SSE连接已建立\n\n")
+	flusher.Flush()
+
 	ctx := r.Context()
 
 	for {
