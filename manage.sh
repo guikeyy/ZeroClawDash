@@ -4,6 +4,29 @@ APP_NAME="zeroclawdash"
 APP_PATH="./${APP_NAME}"
 PID_FILE="./${APP_NAME}.pid"
 LOG_FILE="./${APP_NAME}.log"
+PORT=42611
+
+kill_process_on_port() {
+    local port=$1
+    local pid=$(lsof -ti :$port 2>/dev/null)
+    
+    if [ -n "$pid" ]; then
+        echo "Found process $pid listening on port $port"
+        echo "Stopping process $pid..."
+        kill "$pid" 2>/dev/null
+        sleep 2
+        
+        if ps -p "$pid" > /dev/null 2>&1; then
+            echo "Force killing process $pid..."
+            kill -9 "$pid" 2>/dev/null
+        fi
+        
+        echo "Process $pid stopped"
+        return 0
+    else
+        return 1
+    fi
+}
 
 case "$1" in
     start)
@@ -11,10 +34,22 @@ case "$1" in
             PID=$(cat "$PID_FILE")
             if ps -p "$PID" > /dev/null 2>&1; then
                 echo "$APP_NAME is already running (PID: $PID)"
-                exit 1
+                echo "Checking if port $PORT is in use..."
+                if kill_process_on_port $PORT; then
+                    echo "Old process stopped, starting new instance..."
+                else
+                    echo "$APP_NAME is already running and port is in use"
+                    exit 1
+                fi
             else
                 rm -f "$PID_FILE"
             fi
+        fi
+        
+        echo "Checking if port $PORT is in use..."
+        if kill_process_on_port $PORT; then
+            echo "Old process on port $PORT stopped"
+            sleep 1
         fi
         
         echo "Starting $APP_NAME..."
