@@ -79,6 +79,8 @@ func main() {
 	http.HandleFunc("/api/system/status/stream", handleSystemStatusStream)
 	http.HandleFunc("/api/config", handleConfig)
 	http.HandleFunc("/api/service/control", handleServiceControl)
+	http.HandleFunc("/api/service/status", handleServiceStatus)
+	http.HandleFunc("/api/service/status/stream", handleServiceStatusStream)
 	http.HandleFunc("/api/logs", handleLogs)
 	http.HandleFunc("/api/update", handleUpdate)
 	http.HandleFunc("/api/update/stream", handleUpdateStream)
@@ -313,25 +315,22 @@ func handleServiceControl(w http.ResponseWriter, r *http.Request) {
 
 	switch req.Action {
 	case "start":
-		if runtime.GOOS == "linux" {
-			operationLog("[SERVICE] 检查 zeroclaw 服务是否已注册到 systemd")
-			checkCmd := exec.Command("systemctl", "is-enabled", "zeroclaw.service")
-			if err := checkCmd.Run(); err != nil {
-				operationLog("[SERVICE] zeroclaw 服务未注册到 systemd，开始注册...")
-				if err := registerSystemdService(); err != nil {
-					operationLog("[SERVICE] 注册 systemd 服务失败: %v", err)
-					http.Error(w, fmt.Sprintf("Failed to register systemd service: %v", err), http.StatusInternalServerError)
-					return
-				}
-				operationLog("[SERVICE] systemd 服务注册成功")
-			} else {
-				operationLog("[SERVICE] zeroclaw 服务已注册到 systemd")
-			}
+		if err := ensureSystemdServiceRegistered(); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to register systemd service: %v", err), http.StatusInternalServerError)
+			return
 		}
 		cmd = exec.Command("./zeroclaw", "service", "start")
 	case "stop":
+		if err := ensureSystemdServiceRegistered(); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to register systemd service: %v", err), http.StatusInternalServerError)
+			return
+		}
 		cmd = exec.Command("./zeroclaw", "service", "stop")
 	case "restart":
+		if err := ensureSystemdServiceRegistered(); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to register systemd service: %v", err), http.StatusInternalServerError)
+			return
+		}
 		cmd = exec.Command("./zeroclaw", "service", "restart")
 	default:
 		operationLog("[SERVICE] 无效的操作: %s", req.Action)
@@ -360,6 +359,84 @@ func handleServiceControl(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func handleServiceStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	status := getZeroclawServiceStatus()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": status,
+	})
+}
+
+func handleServiceStatusStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	ctx := r.Context()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			status := getZeroclawServiceStatus()
+
+			response := map[string]string{
+				"status": status,
+			}
+
+			jsonData, err := json.Marshal(response)
+			if err != nil {
+				continue
+			}
+
+			fmt.Fprintf(w, "data: %s\n\n", jsonData)
+			flusher.Flush()
+		}
+	}
+}
+
+func getZeroclawServiceStatus() string {
+	if runtime.GOOS == "linux" {
+		cmd := exec.Command("systemctl", "is-active", "zeroclaw.service")
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return "stopped"
+		}
+		if strings.TrimSpace(string(output)) == "active" {
+			return "running"
+		}
+		return "stopped"
+	}
+
+	cmd := exec.Command("pgrep", "-f", "./zeroclaw")
+	if err := cmd.Run(); err != nil {
+		return "stopped"
+	}
+	return "running"
+}
+
 func registerSystemdService() error {
 	homeDir := os.Getenv("HOME")
 	zeroclawPath := filepath.Join(homeDir, "zeroclaw", "zeroclaw")
@@ -381,13 +458,11 @@ RestartSec=5
 WantedBy=multi-user.target
 `, filepath.Join(homeDir, "zeroclaw"), zeroclawPath)
 
-	cmd := exec.Command("tee", servicePath)
-	cmd.Stdin = strings.NewReader(serviceContent)
-	if _, err := cmd.CombinedOutput(); err != nil {
+	if err := os.WriteFile(servicePath, []byte(serviceContent), 0644); err != nil {
 		return fmt.Errorf("failed to write service file: %w", err)
 	}
 
-	cmd = exec.Command("systemctl", "daemon-reload")
+	cmd := exec.Command("systemctl", "daemon-reload")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to reload systemd: %w, output: %s", err, string(output))
 	}
@@ -397,6 +472,28 @@ WantedBy=multi-user.target
 		return fmt.Errorf("failed to enable service: %w, output: %s", err, string(output))
 	}
 
+	return nil
+}
+
+func ensureSystemdServiceRegistered() error {
+	if runtime.GOOS != "linux" {
+		return nil
+	}
+
+	operationLog("[SERVICE] 检查 zeroclaw 服务是否已注册到 systemd")
+	checkCmd := exec.Command("systemctl", "is-enabled", "zeroclaw.service")
+	if err := checkCmd.Run(); err == nil {
+		operationLog("[SERVICE] zeroclaw 服务已注册到 systemd")
+		return nil
+	}
+
+	operationLog("[SERVICE] zeroclaw 服务未注册到 systemd，开始注册...")
+	if err := registerSystemdService(); err != nil {
+		operationLog("[SERVICE] 注册 systemd 服务失败: %v", err)
+		return err
+	}
+
+	operationLog("[SERVICE] systemd 服务注册成功")
 	return nil
 }
 
