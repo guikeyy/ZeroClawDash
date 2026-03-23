@@ -299,12 +299,12 @@ func handleServiceControl(w http.ResponseWriter, r *http.Request) {
 
 	var req ServiceControlRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Printf("[SERVICE] 请求体解析失败: %v", err)
+		operationLog("[SERVICE] 请求体解析失败: %v", err)
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	log.Printf("[SERVICE] 收到服务控制请求: %s (类型: %s)", req.Action, req.Type)
+	operationLog("[SERVICE] 收到服务控制请求: action=%s, type=%s", req.Action, req.Type)
 	var cmd *exec.Cmd
 	serviceType := req.Type
 	if serviceType == "" {
@@ -313,29 +313,91 @@ func handleServiceControl(w http.ResponseWriter, r *http.Request) {
 
 	switch req.Action {
 	case "start":
+		if runtime.GOOS == "linux" {
+			operationLog("[SERVICE] 检查 zeroclaw 服务是否已注册到 systemd")
+			checkCmd := exec.Command("systemctl", "is-enabled", "zeroclaw.service")
+			if err := checkCmd.Run(); err != nil {
+				operationLog("[SERVICE] zeroclaw 服务未注册到 systemd，开始注册...")
+				if err := registerSystemdService(); err != nil {
+					operationLog("[SERVICE] 注册 systemd 服务失败: %v", err)
+					http.Error(w, fmt.Sprintf("Failed to register systemd service: %v", err), http.StatusInternalServerError)
+					return
+				}
+				operationLog("[SERVICE] systemd 服务注册成功")
+			} else {
+				operationLog("[SERVICE] zeroclaw 服务已注册到 systemd")
+			}
+		}
 		cmd = exec.Command("./zeroclaw", "service", "start")
 	case "stop":
 		cmd = exec.Command("./zeroclaw", "service", "stop")
 	case "restart":
 		cmd = exec.Command("./zeroclaw", "service", "restart")
 	default:
-		log.Printf("[SERVICE] 无效的操作: %s", req.Action)
+		operationLog("[SERVICE] 无效的操作: %s", req.Action)
 		http.Error(w, "Invalid action", http.StatusBadRequest)
 		return
 	}
 
-	log.Printf("[SERVICE] 正在执行: %s", strings.Join(cmd.Args, " "))
-	if err := cmd.Run(); err != nil {
-		log.Printf("[SERVICE] 执行失败: %v", err)
-		http.Error(w, fmt.Sprintf("Failed to execute %s: %v", req.Action, err), http.StatusInternalServerError)
+	operationLog("[SERVICE] 正在执行命令: %s", strings.Join(cmd.Args, " "))
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		operationLog("[SERVICE] 执行失败: %v", err)
+		operationLog("[SERVICE] 命令输出: %s", string(output))
+		http.Error(w, fmt.Sprintf("Failed to execute %s: %v\nOutput: %s", req.Action, err, string(output)), http.StatusInternalServerError)
 		return
 	}
 
-	log.Printf("[SERVICE] 执行成功: %s", req.Action)
+	operationLog("[SERVICE] 执行成功: %s", req.Action)
+	if len(output) > 0 {
+		operationLog("[SERVICE] 命令输出: %s", string(output))
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"message": fmt.Sprintf("Service %s executed successfully", req.Action),
 	})
+}
+
+func registerSystemdService() error {
+	homeDir := os.Getenv("HOME")
+	zeroclawPath := filepath.Join(homeDir, "zeroclaw", "zeroclaw")
+	servicePath := "/etc/systemd/system/zeroclaw.service"
+
+	serviceContent := fmt.Sprintf(`[Unit]
+Description=ZeroClaw Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=%s
+ExecStart=%s daemon
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+`, filepath.Join(homeDir, "zeroclaw"), zeroclawPath)
+
+	cmd := exec.Command("tee", servicePath)
+	cmd.Stdin = strings.NewReader(serviceContent)
+	if _, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to write service file: %w", err)
+	}
+
+	cmd = exec.Command("systemctl", "daemon-reload")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to reload systemd: %w, output: %s", err, string(output))
+	}
+
+	cmd = exec.Command("systemctl", "enable", "zeroclaw.service")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to enable service: %w, output: %s", err, string(output))
+	}
+
+	return nil
 }
 
 func handleLogs(w http.ResponseWriter, r *http.Request) {
@@ -362,17 +424,24 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	homeDir := os.Getenv("HOME")
+	logFilePath := filepath.Join(homeDir, "zeroclaw", "zeroclawdash.log")
+
 	cmd := exec.Command("journalctl", "-u", "zeroclaw", "-f", "-n", "100")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		fmt.Fprintf(w, "data: [ERROR] 无法启动日志流: %v\n\n", err)
+		fmt.Fprintf(w, "data: [ERROR] 无法启动 journalctl 日志流: %v\n\n", err)
+		fmt.Fprintf(w, "data: [INFO] 尝试读取备用日志文件: %s\n\n", logFilePath)
 		flusher.Flush()
+		readLogFile(w, flusher, logFilePath)
 		return
 	}
 
 	if err := cmd.Start(); err != nil {
-		fmt.Fprintf(w, "data: [ERROR] 无法启动日志流: %v\n\n", err)
+		fmt.Fprintf(w, "data: [ERROR] 无法启动 journalctl 日志流: %v\n\n", err)
+		fmt.Fprintf(w, "data: [INFO] 尝试读取备用日志文件: %s\n\n", logFilePath)
 		flusher.Flush()
+		readLogFile(w, flusher, logFilePath)
 		return
 	}
 	defer cmd.Process.Kill()
@@ -382,6 +451,50 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 		line := scanner.Text()
 		fmt.Fprintf(w, "data: %s\n\n", line)
 		flusher.Flush()
+	}
+}
+
+func readLogFile(w http.ResponseWriter, flusher http.Flusher, logFilePath string) {
+	file, err := os.Open(logFilePath)
+	if err != nil {
+		fmt.Fprintf(w, "data: [ERROR] 无法打开日志文件 %s: %v\n\n", logFilePath, err)
+		return
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		fmt.Fprintf(w, "data: %s\n\n", line)
+		flusher.Flush()
+	}
+
+	fmt.Fprintf(w, "data: [INFO] 已读取日志文件完成，等待新日志...\n\n")
+	flusher.Flush()
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	var lastSize int64
+	for range ticker.C {
+		stat, err := file.Stat()
+		if err != nil {
+			continue
+		}
+
+		if stat.Size() > lastSize {
+			_, err := file.Seek(lastSize, 0)
+			if err != nil {
+				continue
+			}
+
+			for scanner.Scan() {
+				line := scanner.Text()
+				fmt.Fprintf(w, "data: %s\n\n", line)
+				flusher.Flush()
+			}
+			lastSize = stat.Size()
+		}
 	}
 }
 
