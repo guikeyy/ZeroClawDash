@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,34 +9,75 @@
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
-        .mono { font-family: 'JetBrains Mono', monospace; }
-        .log-container { background: #1a1b26; color: #a9b1d6; height: 300px; overflow-y: auto; }
-        .status-pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        .animate-spin { animation: spin 1s linear infinite; }
+
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .log-container {
+            background: #1a1b26;
+            color: #a9b1d6;
+            height: 300px;
+            overflow-y: auto;
+        }
+
+        .status-pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+
+        .progress-bar {
+            transition: width 0.5s ease-in-out;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: .5;
+            }
+        }
+
+        @keyframes spin {
+            from {
+                transform: rotate(0deg);
+            }
+
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .animate-spin {
+            animation: spin 1s linear infinite;
+        }
     </style>
 </head>
+
 <body class="bg-gray-50 min-h-screen pb-12">
 
     <nav class="bg-indigo-600 text-white shadow-lg mb-6">
         <div class="max-w-5xl mx-auto px-4 py-3 flex justify-between items-center">
             <div class="flex items-center gap-2">
                 <i data-lucide="cpu" class="w-6 h-6"></i>
-                <h1 class="text-xl font-bold tracking-tight">ZeroClaw <span class="font-light text-indigo-200">Manager</span></h1>
+                <h1 class="text-xl font-bold tracking-tight">ZeroClaw <span
+                        class="font-light text-indigo-200">Dash</span></h1>
             </div>
             <div class="flex items-center gap-4 text-sm">
                 <span class="bg-indigo-700 px-3 py-1 rounded-full flex items-center gap-1">
                     <span class="w-2 h-2 rounded-full bg-green-400 status-pulse"></span>
                     Running
                 </span>
-                <span class="text-indigo-100">v1.2.0</span>
+                <span class="text-indigo-100">v1.0.0</span>
             </div>
         </div>
     </nav>
 
     <main class="max-w-5xl mx-auto px-4 grid grid-cols-1 md:grid-cols-3 gap-6">
-        
+
         <div class="space-y-6">
             <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
                 <h3 class="text-gray-500 text-xs font-bold uppercase mb-4 flex items-center gap-2">
@@ -48,16 +90,19 @@
                             <span class="font-medium text-indigo-600" id="cpu-val">12%</span>
                         </div>
                         <div class="w-full bg-gray-100 rounded-full h-1.5">
-                            <div class="bg-indigo-500 h-1.5 rounded-full" style="width: 12%"></div>
+                            <div class="bg-indigo-500 h-1.5 rounded-full progress-bar" id="cpu-bar" style="width: 12%"></div>
                         </div>
                     </div>
                     <div>
                         <div class="flex justify-between text-sm mb-1">
                             <span class="text-gray-600">内存占用</span>
-                            <span class="font-medium text-indigo-600" id="mem-val">420MB / 1GB</span>
+                            <div class="text-right">
+                                <span class="font-medium text-indigo-600" id="mem-val">420MB / 1GB</span>
+                                <span class="font-medium text-indigo-600 block" id="swap-val"></span>
+                            </div>
                         </div>
                         <div class="w-full bg-gray-100 rounded-full h-1.5">
-                            <div class="bg-blue-500 h-1.5 rounded-full" style="width: 42%"></div>
+                            <div class="bg-blue-500 h-1.5 rounded-full progress-bar" id="mem-bar" style="width: 42%"></div>
                         </div>
                     </div>
                 </div>
@@ -67,31 +112,37 @@
                 <h3 class="text-gray-500 text-xs font-bold uppercase mb-4">服务控制</h3>
                 <div class="mb-4">
                     <label class="text-sm text-gray-600 mb-2 block">服务类型</label>
-                    <select id="service-type" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                        <option value="daemon">Daemon (完整运行时)</option>
+                    <select id="service-type"
+                        class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
                         <option value="gateway">Gateway (Webhook/WhatsApp)</option>
+                        <option value="daemon">Daemon (完整运行时)</option>
                     </select>
                 </div>
                 <div class="grid grid-cols-2 gap-3">
-                    <button onclick="apiAction('start')" class="flex items-center justify-center gap-2 bg-green-50 text-green-700 py-2 rounded-lg hover:bg-green-100 transition">
+                    <button onclick="apiAction('start')"
+                        class="flex items-center justify-center gap-2 bg-green-50 text-green-700 py-2 rounded-lg hover:bg-green-100 transition">
                         <i data-lucide="play" class="w-4 h-4"></i> 启动
                     </button>
-                    <button onclick="apiAction('stop')" class="flex items-center justify-center gap-2 bg-red-50 text-red-700 py-2 rounded-lg hover:bg-red-100 transition">
+                    <button onclick="apiAction('stop')"
+                        class="flex items-center justify-center gap-2 bg-red-50 text-red-700 py-2 rounded-lg hover:bg-red-100 transition">
                         <i data-lucide="square" class="w-4 h-4"></i> 停止
                     </button>
-                    <button onclick="apiAction('restart')" class="col-span-2 flex items-center justify-center gap-2 bg-gray-100 text-gray-700 py-2 rounded-lg hover:bg-gray-200 transition">
+                    <button onclick="apiAction('restart')"
+                        class="col-span-2 flex items-center justify-center gap-2 bg-gray-100 text-gray-700 py-2 rounded-lg hover:bg-gray-200 transition">
                         <i data-lucide="refresh-cw" class="w-4 h-4"></i> 重启服务
                     </button>
                 </div>
             </div>
 
-            <div id="version-update-card" class="bg-indigo-50 p-5 rounded-xl border border-indigo-100 text-indigo-900 hidden">
+            <div id="version-update-card"
+                class="bg-indigo-50 p-5 rounded-xl border border-indigo-100 text-indigo-900 hidden">
                 <div class="flex justify-between items-start mb-2">
                     <h3 class="font-bold">版本更新</h3>
                     <span class="text-[10px] bg-indigo-200 px-1.5 py-0.5 rounded uppercase">New</span>
                 </div>
                 <p class="text-xs text-indigo-700 mb-4 text-pretty" id="version-message">检测到新版本</p>
-                <button onclick="updateBinary()" class="w-full bg-indigo-600 text-white text-sm py-2 rounded-lg font-medium hover:bg-indigo-700 shadow-sm transition">
+                <button onclick="updateBinary()"
+                    class="w-full bg-indigo-600 text-white text-sm py-2 rounded-lg font-medium hover:bg-indigo-700 shadow-sm transition">
                     一键升级到最新版
                 </button>
             </div>
@@ -110,6 +161,9 @@
                         <span class="text-sm font-medium text-gray-800" id="latest-version">检测中...</span>
                     </div>
                     <div id="version-status" class="text-xs text-gray-500 mt-2">正在检查版本...</div>
+                    <button id="update-btn" onclick="updateBinary()" class="hidden w-full bg-indigo-600 text-white text-sm py-2 rounded-lg font-medium hover:bg-indigo-700 shadow-sm transition mt-3">
+                        一键升级到最新版
+                    </button>
                 </div>
             </div>
         </div>
@@ -123,19 +177,21 @@
                     </div>
                     <div class="flex gap-2">
                         <div class="relative inline-block text-left">
-                            <select onchange="applyPreset(this.value)" class="text-xs bg-gray-50 border border-gray-200 px-2 py-1.5 rounded-md outline-none focus:ring-1 focus:ring-indigo-500">
+                            <select onchange="applyPreset(this.value)"
+                                class="text-xs bg-gray-50 border border-gray-200 px-2 py-1.5 rounded-md outline-none focus:ring-1 focus:ring-indigo-500">
                                 <option value="">+ 选择预设服务商</option>
                                 <option value="deepseek">DeepSeek</option>
                                 <option value="silicon">SiliconFlow</option>
                                 <option value="openai">OpenAI</option>
                             </select>
                         </div>
-                        <button onclick="saveConfig()" id="save-btn" class="bg-indigo-600 text-white text-xs px-4 py-1.5 rounded-md hover:bg-indigo-700 transition flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
+                        <button onclick="saveConfig()" id="save-btn"
+                            class="bg-indigo-600 text-white text-xs px-4 py-1.5 rounded-md hover:bg-indigo-700 transition flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
                             <i data-lucide="save" class="w-3.5 h-3.5"></i> 保存配置
                         </button>
                     </div>
                 </div>
-                
+
                 <div class="p-4">
                     <form id="config-form" class="space-y-3">
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -144,7 +200,8 @@
                                     <i data-lucide="link" class="w-4 h-4 inline mr-1"></i>
                                     协议类型
                                 </label>
-                                <select id="protocol-type" class="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm outline-none transition">
+                                <select id="protocol-type"
+                                    class="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm outline-none transition">
                                     <option value="openai">OpenAI 兼容</option>
                                     <option value="anthropic">Anthropic 兼容</option>
                                 </select>
@@ -154,7 +211,8 @@
                                     <i data-lucide="cpu" class="w-4 h-4 inline mr-1"></i>
                                     默认模型
                                 </label>
-                                <input type="text" id="default-model" placeholder="例如: gpt-4, deepseek-chat" class="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm outline-none transition">
+                                <input type="text" id="default-model" placeholder="例如: gpt-4, deepseek-chat"
+                                    class="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm outline-none transition">
                             </div>
                         </div>
 
@@ -163,7 +221,8 @@
                                 <i data-lucide="globe" class="w-4 h-4 inline mr-1"></i>
                                 API URL
                             </label>
-                            <input type="url" id="api-url" placeholder="https://api.example.com/v1" class="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm outline-none transition font-mono">
+                            <input type="url" id="api-url" placeholder="https://api.example.com/v1"
+                                class="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm outline-none transition font-mono">
                         </div>
 
                         <div>
@@ -172,8 +231,10 @@
                                 API Key
                             </label>
                             <div class="relative">
-                                <input type="password" id="api-key" placeholder="sk-..." class="w-full px-3 py-2 pr-10 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm outline-none transition font-mono">
-                                <button type="button" onclick="toggleApiKeyVisibility()" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                                <input type="password" id="api-key" placeholder="sk-..."
+                                    class="w-full px-3 py-2 pr-10 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm outline-none transition font-mono">
+                                <button type="button" onclick="toggleApiKeyVisibility()"
+                                    class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
                                     <i data-lucide="eye" id="eye-icon" class="w-4 h-4"></i>
                                 </button>
                             </div>
@@ -182,11 +243,13 @@
                         <div class="bg-gray-50 rounded-lg p-3">
                             <div class="flex items-center justify-between mb-1.5">
                                 <span class="text-xs font-medium text-gray-600">生成的配置预览</span>
-                                <button type="button" onclick="togglePreview()" class="text-xs text-indigo-600 hover:text-indigo-800">
+                                <button type="button" onclick="togglePreview()"
+                                    class="text-xs text-indigo-600 hover:text-indigo-800">
                                     <span id="preview-toggle-text">展开</span>
                                 </button>
                             </div>
-                            <pre id="config-preview" class="text-xs text-gray-700 mono hidden whitespace-pre-wrap break-all"></pre>
+                            <pre id="config-preview"
+                                class="text-xs text-gray-700 mono hidden whitespace-pre-wrap break-all"></pre>
                         </div>
 
                         <div id="error-message" class="hidden bg-red-50 border border-red-200 rounded-lg p-3">
@@ -276,12 +339,11 @@
             try {
                 const response = await fetch('/api/version/check');
                 const data = await response.json();
-                
+
                 const localVersionEl = document.getElementById('local-version');
                 const latestVersionEl = document.getElementById('latest-version');
                 const versionStatusEl = document.getElementById('version-status');
-                const updateCardEl = document.getElementById('version-update-card');
-                const versionMessageEl = document.getElementById('version-message');
+                const updateBtnEl = document.getElementById('update-btn');
 
                 if (data.error) {
                     if (data.error.includes('请求超时') || data.error.includes('timeout')) {
@@ -289,15 +351,14 @@
                         latestVersionEl.textContent = data.message || '-';
                         versionStatusEl.textContent = '请求超时，网络错误';
                         versionStatusEl.classList.add('text-red-500');
-                        versionMessageEl.textContent = '云端链接: ' + (data.message || 'https://api.github.com/repos/zeroclaw-labs/zeroclaw/releases/latest');
-                        updateCardEl.classList.add('hidden');
+                        addLogMessage('版本检查超时: ' + (data.message || '网络错误'));
                         return;
                     }
                     localVersionEl.textContent = '未检测到';
                     latestVersionEl.textContent = '-';
                     versionStatusEl.textContent = data.message;
                     versionStatusEl.classList.add('text-red-500');
-                    updateCardEl.classList.add('hidden');
+                    addLogMessage('版本检查失败: ' + data.message);
                     return;
                 }
 
@@ -309,12 +370,14 @@
                 if (data.update_available) {
                     versionStatusEl.textContent = data.message;
                     versionStatusEl.classList.add('text-indigo-600');
-                    versionMessageEl.textContent = '本地版本: ' + localVersion + '\n云端最新版本: ' + latestVersion + '\n发现新版本: ' + data.message;
-                    updateCardEl.classList.remove('hidden');
+                    addLogMessage('版本更新: ' + data.message);
+                    addLogMessage('本地版本: ' + localVersion);
+                    addLogMessage('云端最新版本: ' + latestVersion);
+                    updateBtnEl.classList.remove('hidden');
                 } else {
                     versionStatusEl.textContent = data.message;
                     versionStatusEl.classList.add('text-green-600');
-                    updateCardEl.classList.add('hidden');
+                    updateBtnEl.classList.add('hidden');
                 }
             } catch (error) {
                 console.error('Failed to check version:', error);
@@ -348,17 +411,17 @@
             }
 
             const providerPrefix = protocol === 'anthropic' ? 'anthropic-custom' : 'custom';
-            
+
             let config = `default_provider = "${providerPrefix}:${url}"\n`;
-            
+
             if (key) {
                 config += `api_key = "${key}"\n`;
             }
-            
+
             if (model) {
                 config += `default_model = "${model}"\n`;
             }
-            
+
             return config;
         }
 
@@ -457,7 +520,7 @@
             const successText = document.getElementById('success-text');
             successText.textContent = message;
             successDiv.classList.remove('hidden');
-            
+
             setTimeout(() => {
                 successDiv.classList.add('hidden');
             }, 5000);
@@ -502,7 +565,7 @@
 
                 const result = await response.json();
                 alert(result.message || '更新成功！');
-                
+
                 await checkVersion();
             } catch (error) {
                 alert('更新失败: ' + error.message);
@@ -513,16 +576,21 @@
             try {
                 const response = await fetch('/api/system/status');
                 const data = await response.json();
-                
+
                 document.getElementById('cpu-val').textContent = data.cpu_usage;
-                document.getElementById('mem-val').textContent = data.memory_usage;
+                const cpuPercent = parseInt(data.cpu_usage);
+                document.getElementById('cpu-bar').style.width = cpuPercent + '%';
+
+                const memParts = data.memory_usage.split(', Swap: ');
+                document.getElementById('mem-val').textContent = memParts[0];
+                document.getElementById('swap-val').textContent = memParts[1] || '';
 
                 const memMatch = data.memory_usage.match(/(\d+)MB \/ (\d+)MB/);
                 if (memMatch) {
                     const used = parseInt(memMatch[1]);
                     const total = parseInt(memMatch[2]);
                     const memPercent = Math.round((used / total) * 100);
-                    document.querySelectorAll('.bg-blue-500')[1].style.width = memPercent + '%';
+                    document.getElementById('mem-bar').style.width = memPercent + '%';
                 }
 
                 const statusIndicator = document.querySelector('.status-pulse');
@@ -541,19 +609,24 @@
         function connectSystemStatus() {
             const eventSource = new EventSource('/api/system/status/stream');
 
-            eventSource.onmessage = function(event) {
+            eventSource.onmessage = function (event) {
                 try {
                     const data = JSON.parse(event.data);
-                    
+
                     document.getElementById('cpu-val').textContent = data.cpu_usage;
-                    document.getElementById('mem-val').textContent = data.memory_usage;
+                    const cpuPercent = parseInt(data.cpu_usage);
+                    document.getElementById('cpu-bar').style.width = cpuPercent + '%';
+
+                    const memParts = data.memory_usage.split(', Swap: ');
+                    document.getElementById('mem-val').textContent = memParts[0];
+                    document.getElementById('swap-val').textContent = memParts[1] || '';
 
                     const memMatch = data.memory_usage.match(/(\d+)MB \/ (\d+)MB/);
                     if (memMatch) {
                         const used = parseInt(memMatch[1]);
                         const total = parseInt(memMatch[2]);
                         const memPercent = Math.round((used / total) * 100);
-                        document.querySelectorAll('.bg-blue-500')[1].style.width = memPercent + '%';
+                        document.getElementById('mem-bar').style.width = memPercent + '%';
                     }
 
                     const statusIndicator = document.querySelector('.status-pulse');
@@ -569,7 +642,7 @@
                 }
             };
 
-            eventSource.onerror = function() {
+            eventSource.onerror = function () {
                 eventSource.close();
                 setTimeout(connectSystemStatus, 5000);
             };
@@ -579,7 +652,7 @@
             const logsContainer = document.getElementById('logs');
             const eventSource = new EventSource('/api/logs');
 
-            eventSource.onmessage = function(event) {
+            eventSource.onmessage = function (event) {
                 const logLine = document.createElement('div');
                 logLine.textContent = event.data;
                 logsContainer.appendChild(logLine);
@@ -591,10 +664,23 @@
                 }
             };
 
-            eventSource.onerror = function(event) {
+            eventSource.onerror = function (event) {
                 eventSource.close();
                 console.log('Logs connection closed, will not auto-reconnect');
             };
+        }
+
+        function addLogMessage(message) {
+            const logsContainer = document.getElementById('logs');
+            const logLine = document.createElement('div');
+            logLine.textContent = message;
+            logsContainer.appendChild(logLine);
+            logsContainer.scrollTop = logsContainer.scrollHeight;
+
+            const logDivs = logsContainer.querySelectorAll('div');
+            if (logDivs.length > 100) {
+                logsContainer.removeChild(logDivs[0]);
+            }
         }
 
         form.addEventListener('input', updatePreview);
@@ -607,4 +693,5 @@
         connectLogs();
     </script>
 </body>
+
 </html>

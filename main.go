@@ -311,27 +311,11 @@ func handleServiceControl(w http.ResponseWriter, r *http.Request) {
 
 	switch req.Action {
 	case "start":
-		cmd = exec.Command("./zeroclaw", serviceType)
+		cmd = exec.Command("./zeroclaw", "service", "start")
 	case "stop":
-		if serviceType == "daemon" {
-			cmd = exec.Command("./zeroclaw", "estop")
-		} else {
-			cmd = exec.Command("pkill", "-f", fmt.Sprintf("./zeroclaw %s", serviceType))
-		}
+		cmd = exec.Command("./zeroclaw", "service", "stop")
 	case "restart":
-		if serviceType == "daemon" {
-			cmd = exec.Command("./zeroclaw", "estop", "resume")
-			if err := cmd.Run(); err != nil {
-				log.Printf("[SERVICE] 停止服务失败: %v", err)
-			}
-			cmd = exec.Command("./zeroclaw", serviceType)
-		} else {
-			cmd = exec.Command("pkill", "-f", fmt.Sprintf("./zeroclaw %s", serviceType))
-			if err := cmd.Run(); err != nil {
-				log.Printf("[SERVICE] 停止服务失败: %v", err)
-			}
-			cmd = exec.Command("./zeroclaw", serviceType)
-		}
+		cmd = exec.Command("./zeroclaw", "service", "restart")
 	default:
 		log.Printf("[SERVICE] 无效的操作: %s", req.Action)
 		http.Error(w, "Invalid action", http.StatusBadRequest)
@@ -792,8 +776,8 @@ func downloadAndInstallBinary(assetURL, version, expectedHash string) error {
 		log.Println("[UPDATE] 警告：未提供期望的哈希值，跳过校验")
 	}
 
-	binaryPath := "/usr/local/bin/zeroclaw"
-	backupPath := binaryPath + ".bak"
+	binaryPath := "./zeroclaw"
+	backupPath := "./zeroclaw.bak"
 
 	log.Printf("[UPDATE] 正在备份当前版本: %s -> %s", binaryPath, backupPath)
 	if err := copyFile(binaryPath, backupPath); err != nil && !os.IsNotExist(err) {
@@ -802,12 +786,19 @@ func downloadAndInstallBinary(assetURL, version, expectedHash string) error {
 	log.Println("[UPDATE] 备份完成")
 
 	log.Println("[UPDATE] 正在停止服务...")
-	cmd := exec.Command("./zeroclaw", "estop")
+	cmd := exec.Command("./zeroclaw", "service", "stop")
 	if err := cmd.Run(); err != nil {
 		log.Printf("Warning: failed to stop service: %v", err)
 	}
 
 	log.Println("[UPDATE] 正在解压文件...")
+	extractedBinary := "/tmp/zeroclaw"
+	if _, err := os.Stat(extractedBinary); err == nil {
+		log.Printf("[UPDATE] 检测到旧的二进制文件，正在删除: %s", extractedBinary)
+		if err := os.Remove(extractedBinary); err != nil {
+			log.Printf("Warning: failed to remove old binary: %v", err)
+		}
+	}
 	cmd = exec.Command("tar", "-xzf", tempFile, "-C", "/tmp")
 	if err := cmd.Run(); err != nil {
 		restoreBinary(backupPath)
@@ -815,7 +806,6 @@ func downloadAndInstallBinary(assetURL, version, expectedHash string) error {
 	}
 	log.Println("[UPDATE] 解压完成")
 
-	extractedBinary := "/tmp/zeroclaw"
 	if _, err := os.Stat(extractedBinary); err != nil {
 		restoreBinary(backupPath)
 		return fmt.Errorf("extracted binary not found: %v", err)
@@ -835,15 +825,27 @@ func downloadAndInstallBinary(assetURL, version, expectedHash string) error {
 	log.Println("[UPDATE] 权限设置完成")
 
 	log.Println("[UPDATE] 正在启动服务...")
-	cmd = exec.Command("zeroclaw", "service", "start")
-	if err := cmd.Run(); err != nil {
-		log.Printf("Warning: failed to start service: %v", err)
+	log.Println("[UPDATE] 调用后端 /api/service/control 接口，参数 action: start")
+	startReq := ServiceControlRequest{Action: "start", Type: "daemon"}
+	startReqJSON, _ := json.Marshal(startReq)
+	startResp, err := http.Post("http://localhost:42611/api/service/control", "application/json", bytes.NewBuffer(startReqJSON))
+	if err != nil {
+		log.Printf("Warning: failed to start service via API: %v", err)
+	} else {
+		startResp.Body.Close()
 	}
 
 	log.Println("[UPDATE] 正在检查服务状态...")
-	cmd = exec.Command("zeroclaw", "service", "status")
-	if err := cmd.Run(); err != nil {
-		log.Printf("Warning: service status check failed: %v", err)
+	log.Println("[UPDATE] 调用后端 /api/system/status 接口确认服务状态")
+	statusResp, err := http.Get("http://localhost:42611/api/system/status")
+	if err != nil {
+		log.Printf("Warning: failed to check service status via API: %v", err)
+	} else {
+		defer statusResp.Body.Close()
+		var status SystemStatus
+		if err := json.NewDecoder(statusResp.Body).Decode(&status); err == nil {
+			log.Printf("[UPDATE] 服务状态: %s", status.ServiceStatus)
+		}
 	}
 
 	log.Println("[UPDATE] 更新流程完成")
@@ -868,7 +870,7 @@ func calculateSHA256(filePath string) (string, error) {
 
 func restoreBinary(backupPath string) {
 	if _, err := os.Stat(backupPath); err == nil {
-		copyFile(backupPath, "/usr/local/bin/zeroclaw")
+		copyFile(backupPath, "./zeroclaw")
 	}
 }
 

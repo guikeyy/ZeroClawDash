@@ -26,18 +26,18 @@
 ### 3.2 自动化版本管理
 
 - **版本检测**：后端请求 GitHub API，对比本地二进制版本与云端最新 Release。
-- **云端地址**：`https://github.com/guikeyy/zeroclaw/releases`
+- **云端地址**：`https://github.com/zeroclaw-labs/zeroclaw/releases`
 - **增量更新逻辑**：
   1. 用户触发更新。
   2. 后端通过正则匹配下载玩客云专用包：`zeroclaw-{version}-armv7-unknown-linux-gnueabihf.tar.gz`（版本号动态获取）。
   3. **安全替换**：
-     - 备份当前二进制文件：`cp /usr/local/bin/zeroclaw /usr/local/bin/zeroclaw.bak`
-     - 停止当前服务：`zeroclaw service stop`
-     - 解压新版包：`tar -xzf zeroclaw-{version}-armv7-unknown-linux-gnueabihf.tar.gz`
-     - 覆盖旧二进制文件：`cp zeroclaw /usr/local/bin/zeroclaw`
-     - 赋予执行权限：`chmod +x /usr/local/bin/zeroclaw`
-     - 启动服务：`zeroclaw service start`
-     - 验证服务状态：`zeroclaw service status`
+     - 备份当前二进制文件：`cp ./zeroclaw ./zeroclaw.bak`
+     - 停止当前服务：`./zeroclaw service stop`
+     - 解压新版包：`tar -xzf zeroclaw-armv7-unknown-linux-gnueabihf.tar.gz`
+     - 覆盖旧二进制文件：`cp zeroclaw ./zeroclaw`
+     - 赋予执行权限：`chmod +x ./zeroclaw`
+     - 启动服务：调用后端 `/api/service/control` 接口，参数 `action: start`
+     - 验证服务状态：调用后端 `/api/system/status` 接口确认服务状态
 
 ### 3.3 参数化配置中心 (核心改动)
 
@@ -104,3 +104,4 @@
 - **Phase 2**: 实现 `config.toml` 的读写逻辑及 `custom:` 规则转换。
 - **Phase 3**: 对接 SSE 日志流与系统资源监控。
 - **Phase 4**: 实现一键升级逻辑及 GitHub API 对接。
+
