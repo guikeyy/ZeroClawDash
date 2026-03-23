@@ -68,8 +68,9 @@ type VersionCheckResponse struct {
 }
 
 var (
-	configPath = filepath.Join(os.Getenv("HOME"), ".zeroclaw", "config.toml")
-	version    = "1.2.0"
+	configPath       = filepath.Join(os.Getenv("HOME"), ".zeroclaw", "config.toml")
+	version          = "1.2.0"
+	operationLogChan = make(chan string, 100)
 )
 
 func main() {
@@ -80,6 +81,7 @@ func main() {
 	http.HandleFunc("/api/service/control", handleServiceControl)
 	http.HandleFunc("/api/logs", handleLogs)
 	http.HandleFunc("/api/update", handleUpdate)
+	http.HandleFunc("/api/update/stream", handleUpdateStream)
 	http.HandleFunc("/api/version/check", handleVersionCheck)
 
 	log.Println("ZeroClawDash starting on :42611")
@@ -214,32 +216,32 @@ func loadExistingConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func saveConfig(w http.ResponseWriter, r *http.Request) {
-	log.Println("[CONFIG] 开始保存配置...")
+	operationLog("[CONFIG] 开始保存配置...")
 	var req ConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Printf("[CONFIG] 请求体解析失败: %v", err)
+		operationLog("[CONFIG] 请求体解析失败: %v", err)
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	if req.APIUrl == "" {
-		log.Println("[CONFIG] API URL 为空")
+		operationLog("[CONFIG] API URL 为空")
 		http.Error(w, "API URL is required", http.StatusBadRequest)
 		return
 	}
 
 	backupPath := configPath + ".bak"
-	log.Printf("[CONFIG] 正在备份配置文件: %s -> %s", configPath, backupPath)
+	operationLog("[CONFIG] 正在备份配置文件: %s -> %s", configPath, backupPath)
 	if err := copyFile(configPath, backupPath); err != nil && !os.IsNotExist(err) {
-		log.Printf("[CONFIG] 备份失败: %v", err)
+		operationLog("[CONFIG] 备份失败: %v", err)
 		http.Error(w, "Failed to backup config file", http.StatusInternalServerError)
 		return
 	}
-	log.Println("[CONFIG] 备份完成")
+	operationLog("[CONFIG] 备份完成")
 
 	config, err := readConfig()
 	if err != nil {
-		log.Println("[CONFIG] 配置文件不存在，创建新配置")
+		operationLog("[CONFIG] 配置文件不存在，创建新配置")
 		config = &Config{}
 	}
 
@@ -257,31 +259,31 @@ func saveConfig(w http.ResponseWriter, r *http.Request) {
 		config.DefaultModel = req.DefaultModel
 	}
 
-	log.Printf("[CONFIG] 正在写入配置文件: %s", configPath)
+	operationLog("[CONFIG] 正在写入配置文件: %s", configPath)
 	if err := writeConfig(config); err != nil {
-		log.Printf("[CONFIG] 写入配置文件失败: %v", err)
+		operationLog("[CONFIG] 写入配置文件失败: %v", err)
 		restoreBackup(backupPath)
 		http.Error(w, "Failed to write config file", http.StatusInternalServerError)
 		return
 	}
-	log.Println("[CONFIG] 配置文件写入完成")
+	operationLog("[CONFIG] 配置文件写入完成")
 
-	log.Println("[CONFIG] 正在验证配置...")
+	operationLog("[CONFIG] 正在验证配置...")
 	if err := validateConfig(); err != nil {
-		log.Printf("[CONFIG] 配置验证失败: %v", err)
+		operationLog("[CONFIG] 配置验证失败: %v", err)
 		restoreBackup(backupPath)
 		http.Error(w, fmt.Sprintf("Config validation failed: %v", err), http.StatusBadRequest)
 		return
 	}
-	log.Println("[CONFIG] 配置验证通过")
+	operationLog("[CONFIG] 配置验证通过")
 
-	log.Println("[CONFIG] 正在重启服务...")
+	operationLog("[CONFIG] 正在重启服务...")
 	if err := restartService(); err != nil {
-		log.Printf("[CONFIG] 重启服务失败: %v", err)
+		operationLog("[CONFIG] 重启服务失败: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to restart service: %v", err), http.StatusInternalServerError)
 		return
 	}
-	log.Println("[CONFIG] 服务重启成功")
+	operationLog("[CONFIG] 服务重启成功")
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
@@ -383,22 +385,61 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func handleUpdateStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	ctx := r.Context()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case logMsg := <-operationLogChan:
+			fmt.Fprintf(w, "data: %s\n\n", logMsg)
+			flusher.Flush()
+		}
+	}
+}
+
+func operationLog(format string, v ...interface{}) {
+	msg := fmt.Sprintf(format, v...)
+	log.Println(msg)
+	select {
+	case operationLogChan <- msg:
+	default:
+	}
+}
+
 func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	log.Println("[UPDATE] 开始检查更新...")
+	operationLog("[UPDATE] 开始检查更新...")
 	release, err := getLatestRelease()
 	if err != nil {
-		log.Printf("[UPDATE] 获取最新版本失败: %v", err)
+		operationLog("[UPDATE] 获取最新版本失败: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to check for updates: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	if release.TagName == version {
-		log.Println("[UPDATE] 当前已是最新版本")
+		operationLog("[UPDATE] 当前已是最新版本")
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
 			"message": "Already up to date",
@@ -406,35 +447,35 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[UPDATE] 发现新版本: %s", release.TagName)
+	operationLog("[UPDATE] 发现新版本: %s", release.TagName)
 	assetURL := ""
 	expectedHash := ""
 	for _, asset := range release.Assets {
 		if strings.Contains(asset.Name, "armv7-unknown-linux-gnueabihf") {
 			assetURL = asset.URL
-			log.Printf("[UPDATE] 找到匹配的架构: %s", asset.Name)
+			operationLog("[UPDATE] 找到匹配的架构: %s", asset.Name)
 			if strings.HasPrefix(asset.Digest, "sha256:") {
 				expectedHash = strings.TrimPrefix(asset.Digest, "sha256:")
-				log.Printf("[UPDATE] 获取到期望的哈希值: %s", expectedHash)
+				operationLog("[UPDATE] 获取到期望的哈希值: %s", expectedHash)
 			}
 			break
 		}
 	}
 
 	if assetURL == "" {
-		log.Println("[UPDATE] 未找到兼容的二进制文件")
+		operationLog("[UPDATE] 未找到兼容的二进制文件")
 		http.Error(w, "No compatible binary found for your architecture", http.StatusNotFound)
 		return
 	}
 
-	log.Println("[UPDATE] 开始下载并安装新版本...")
+	operationLog("[UPDATE] 开始下载并安装新版本...")
 	if err := downloadAndInstallBinary(assetURL, release.TagName, expectedHash); err != nil {
-		log.Printf("[UPDATE] 更新失败: %v", err)
+		operationLog("[UPDATE] 更新失败: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to update: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	log.Printf("[UPDATE] 成功更新到版本 %s", release.TagName)
+	operationLog("[UPDATE] 成功更新到版本 %s", release.TagName)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"message": fmt.Sprintf("Successfully updated to version %s", release.TagName),
@@ -684,23 +725,23 @@ func restoreBackup(backupPath string) {
 }
 
 func validateConfig() error {
-	log.Println("[CONFIG] 开始验证配置 (最多重试3次)...")
+	operationLog("[CONFIG] 开始验证配置 (最多重试3次)...")
 	for i := 0; i < 3; i++ {
 		attempt := i + 1
-		log.Printf("[CONFIG] 验证尝试 %d/3", attempt)
+		operationLog("[CONFIG] 验证尝试 %d/3", attempt)
 		cmd := exec.Command("./zeroclaw", "agent", "-m", "Hello, ZeroClaw!")
 		output, err := cmd.CombinedOutput()
 		if err == nil {
-			log.Println("[CONFIG] 配置验证成功")
+			operationLog("[CONFIG] 配置验证成功")
 			return nil
 		}
 
-		log.Printf("[CONFIG] 验证失败 (尝试 %d/3): %s", attempt, string(output))
+		operationLog("[CONFIG] 验证失败 (尝试 %d/3): %s", attempt, string(output))
 		if i < 2 {
-			log.Printf("[CONFIG] 等待3秒后重试...")
+			operationLog("[CONFIG] 等待3秒后重试...")
 			time.Sleep(3 * time.Second)
 		} else {
-			log.Println("[CONFIG] 验证失败，已达最大重试次数")
+			operationLog("[CONFIG] 验证失败，已达最大重试次数")
 			return fmt.Errorf("validation failed after 3 attempts: %s", string(output))
 		}
 	}
@@ -735,7 +776,7 @@ func getLatestRelease() (*GitHubRelease, error) {
 }
 
 func downloadAndInstallBinary(assetURL, version, expectedHash string) error {
-	log.Printf("[UPDATE] 正在下载: %s", assetURL)
+	operationLog("[UPDATE] 正在下载: %s", assetURL)
 	resp, err := http.Get(assetURL)
 	if err != nil {
 		return err
@@ -743,7 +784,7 @@ func downloadAndInstallBinary(assetURL, version, expectedHash string) error {
 	defer resp.Body.Close()
 
 	tempFile := fmt.Sprintf("/tmp/zeroclaw-%s-armv7.tar.gz", version)
-	log.Printf("[UPDATE] 正在保存到临时文件: %s", tempFile)
+	operationLog("[UPDATE] 正在保存到临时文件: %s", tempFile)
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
@@ -753,48 +794,48 @@ func downloadAndInstallBinary(assetURL, version, expectedHash string) error {
 		return err
 	}
 	defer os.Remove(tempFile)
-	log.Println("[UPDATE] 下载完成")
+	operationLog("[UPDATE] 下载完成")
 
-	log.Println("[UPDATE] 开始计算下载文件的 SHA256 哈希值...")
+	operationLog("[UPDATE] 开始计算下载文件的 SHA256 哈希值...")
 	actualHash, err := calculateSHA256(tempFile)
 	if err != nil {
 		return fmt.Errorf("计算哈希值失败: %v", err)
 	}
-	log.Printf("[UPDATE] 下载文件 SHA256: %s", actualHash)
+	operationLog("[UPDATE] 下载文件 SHA256: %s", actualHash)
 
 	if expectedHash != "" {
-		log.Printf("[UPDATE] 期望的 SHA256: %s", expectedHash)
-		log.Println("[UPDATE] 正在对比哈希值...")
+		operationLog("[UPDATE] 期望的 SHA256: %s", expectedHash)
+		operationLog("[UPDATE] 正在对比哈希值...")
 		if actualHash != expectedHash {
-			log.Printf("[UPDATE] 哈希值不匹配！")
-			log.Printf("[UPDATE]   期望: %s", expectedHash)
-			log.Printf("[UPDATE]   实际: %s", actualHash)
+			operationLog("[UPDATE] 哈希值不匹配！")
+			operationLog("[UPDATE]   期望: %s", expectedHash)
+			operationLog("[UPDATE]   实际: %s", actualHash)
 			return fmt.Errorf("哈希值校验失败：文件可能已损坏或被篡改")
 		}
-		log.Println("[UPDATE] 哈希值校验通过！")
+		operationLog("[UPDATE] 哈希值校验通过！")
 	} else {
-		log.Println("[UPDATE] 警告：未提供期望的哈希值，跳过校验")
+		operationLog("[UPDATE] 警告：未提供期望的哈希值，跳过校验")
 	}
 
 	binaryPath := "./zeroclaw"
 	backupPath := "./zeroclaw.bak"
 
-	log.Printf("[UPDATE] 正在备份当前版本: %s -> %s", binaryPath, backupPath)
+	operationLog("[UPDATE] 正在备份当前版本: %s -> %s", binaryPath, backupPath)
 	if err := copyFile(binaryPath, backupPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to backup binary: %v", err)
 	}
-	log.Println("[UPDATE] 备份完成")
+	operationLog("[UPDATE] 备份完成")
 
-	log.Println("[UPDATE] 正在停止服务...")
+	operationLog("[UPDATE] 正在停止服务...")
 	cmd := exec.Command("./zeroclaw", "service", "stop")
 	if err := cmd.Run(); err != nil {
 		log.Printf("Warning: failed to stop service: %v", err)
 	}
 
-	log.Println("[UPDATE] 正在解压文件...")
+	operationLog("[UPDATE] 正在解压文件...")
 	extractedBinary := "/tmp/zeroclaw"
 	if _, err := os.Stat(extractedBinary); err == nil {
-		log.Printf("[UPDATE] 检测到旧的二进制文件，正在删除: %s", extractedBinary)
+		operationLog("[UPDATE] 检测到旧的二进制文件，正在删除: %s", extractedBinary)
 		if err := os.Remove(extractedBinary); err != nil {
 			log.Printf("Warning: failed to remove old binary: %v", err)
 		}
@@ -804,28 +845,28 @@ func downloadAndInstallBinary(assetURL, version, expectedHash string) error {
 		restoreBinary(backupPath)
 		return fmt.Errorf("failed to extract archive: %v", err)
 	}
-	log.Println("[UPDATE] 解压完成")
+	operationLog("[UPDATE] 解压完成")
 
 	if _, err := os.Stat(extractedBinary); err != nil {
 		restoreBinary(backupPath)
 		return fmt.Errorf("extracted binary not found: %v", err)
 	}
 
-	log.Printf("[UPDATE] 正在复制新版本: %s -> %s", extractedBinary, binaryPath)
+	operationLog("[UPDATE] 正在复制新版本: %s -> %s", extractedBinary, binaryPath)
 	if err := copyFile(extractedBinary, binaryPath); err != nil {
 		restoreBinary(backupPath)
 		return fmt.Errorf("failed to copy binary: %v", err)
 	}
 
-	log.Println("[UPDATE] 正在设置执行权限...")
+	operationLog("[UPDATE] 正在设置执行权限...")
 	if err := os.Chmod(binaryPath, 0755); err != nil {
 		restoreBinary(backupPath)
 		return fmt.Errorf("failed to set executable permissions: %v", err)
 	}
-	log.Println("[UPDATE] 权限设置完成")
+	operationLog("[UPDATE] 权限设置完成")
 
-	log.Println("[UPDATE] 正在启动服务...")
-	log.Println("[UPDATE] 调用后端 /api/service/control 接口，参数 action: start")
+	operationLog("[UPDATE] 正在启动服务...")
+	operationLog("[UPDATE] 调用后端 /api/service/control 接口，参数 action: start")
 	startReq := ServiceControlRequest{Action: "start", Type: "daemon"}
 	startReqJSON, _ := json.Marshal(startReq)
 	startResp, err := http.Post("http://localhost:42611/api/service/control", "application/json", bytes.NewBuffer(startReqJSON))
@@ -835,8 +876,8 @@ func downloadAndInstallBinary(assetURL, version, expectedHash string) error {
 		startResp.Body.Close()
 	}
 
-	log.Println("[UPDATE] 正在检查服务状态...")
-	log.Println("[UPDATE] 调用后端 /api/system/status 接口确认服务状态")
+	operationLog("[UPDATE] 正在检查服务状态...")
+	operationLog("[UPDATE] 调用后端 /api/system/status 接口确认服务状态")
 	statusResp, err := http.Get("http://localhost:42611/api/system/status")
 	if err != nil {
 		log.Printf("Warning: failed to check service status via API: %v", err)
@@ -844,11 +885,11 @@ func downloadAndInstallBinary(assetURL, version, expectedHash string) error {
 		defer statusResp.Body.Close()
 		var status SystemStatus
 		if err := json.NewDecoder(statusResp.Body).Decode(&status); err == nil {
-			log.Printf("[UPDATE] 服务状态: %s", status.ServiceStatus)
+			operationLog("[UPDATE] 服务状态: %s", status.ServiceStatus)
 		}
 	}
 
-	log.Println("[UPDATE] 更新流程完成")
+	operationLog("[UPDATE] 更新流程完成")
 	return nil
 }
 
